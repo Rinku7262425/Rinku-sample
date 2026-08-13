@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>सुरक्षित Q&A विजेट (100% Always-On Display)</title> 
+
+    <style>
+        .qa-widget-container {
+            width: 100%;
+            margin: 0 auto;
+            font-family: sans-serif;
+            position: relative;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+        }
+        .sticky-controls {
+            position: sticky;
+            top: 0;
+            background: #ffffff;
+            z-index: 10;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 5px;
+            border-bottom: 2px solid #eee;
+            margin-bottom: 5px;
+            gap: 5px;
+        }
+        .btn {
+            border: none;
+            padding: 10px 8px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: bold;
+            flex: 1;
+            color: white;
+            text-align: center;
+        }
+        .btn-gray { background: #7f8c8d; }
+        .btn-blue { background: #2980b9; }
+        .btn-green { background: #27ae60; }
+        .btn-dark { background: #34495e; }
+        .btn-orange { background: #e67e22; }
+        .btn-red { background: #c0392b; }
+        
+        #qa-scroll-box {
+            max-height: 500px;
+            overflow-y: auto;
+            padding: 5px;
+            text-align: left;
+            background: #fff;
+            transition: filter 0.3s ease;
+        } 
+
+        /* छिपा हुआ कैनवस और वीडियो जो लाइट चालू रखेंगे */
+        #dummy-canvas, #keep-screen-on-video {
+            position: absolute;
+            width: 2px;
+            height: 2px;
+            opacity: 0.01;
+            pointer-events: none;
+            top: 0;
+            left: 0;
+        }
+    </style>
+</head>
+<body> 
+
+<!-- कैनवस और वीडियो एलिमेंट जो स्क्रीन जगाए रखेंगे -->
+<canvas id="dummy-canvas" width="10" height="10"></canvas>
+<video id="keep-screen-on-video" playsinline loop muted autoplay></video> 
+
+<div class="qa-widget-container" oncontextmenu="return false;" oncopy="return false;" oncut="return false;" onpaste="return false;" onselectstart="return false;" ondragstart="return false;"> 
+
+    <div class="sticky-controls">
+        <button id="toggle-expl-mode-btn" onclick="toggleGlobalExplanationMode()" class="btn btn-gray">📖 व्याख्या देखें</button>
+        <button id="nav-mode-btn" onclick="toggleNavMode()" class="btn btn-dark">📌 मोड: विषय बदलें</button>
+        <button id="blog-speaker-btn" onclick="toggleBlogSpeech()" class="btn btn-gray">🔊 स्पीकर चालू करें</button>
+    </div> 
+
+    <div id="qa-scroll-box">
+        <div id="qa-list-container"></div>
+    </div> 
+
+    <div style="margin-top: 15px; display: flex; gap: 8px; padding: 0 5px;">
+        <button onclick="handleNavigation(-1)" class="btn btn-dark">⬅️ पिछला</button>
+        <button id="toggle-all-btn" onclick="toggleAllAnswers()" class="btn btn-orange">सब उत्तर देखें</button>
+        <button onclick="handleNavigation(1)" class="btn btn-green">अगला ➡️</button>
+    </div> 
+
+</div> 
+
+<textarea id="hidden-qa-source" style="display:none;">
+T इतिहास के महत्वपूर्ण प्रश्न
+भारत की राजधानी क्या है, दिल्ली, नई दिल्ली को 1911 में भारत की राजधानी घोषित किया गया था।
+V भारत का राष्ट्रीय पक्षी क्या है, मोर, भारत का राष्ट्रीय पक्षी मोर है जिसे 1963 में घोषित किया गया था।
+T भूगोल के प्रश्न
+सूर्य के सबसे नजदीक ग्रह कौन सा है, बुध, बुध सौर मंडल का सबसे छोटा ग्रह है।
+V पृथ्वी अपनी धुरी पर कितना झुकती है, 23.5 डिग्री, पृथ्वी अपनी धुरी पर साढ़े तेईस डिग्री झुकती है।
+T उत्तर प्रदेश का इतिहास 
+
+V उत्तर प्रदेश दिवस कब मनाया जाता है?, 24 जनवरी, व्याख्या: 24 जनवरी 1950 को 'संयुक्त प्रांत' का नाम बदलकर 'उत्तर प्रदेश' किया गया था। इसीलिए 2018 से प्रतिवर्ष 24 जनवरी को 'उत्तर प्रदेश दिवस' मनाया जाता है।
+प्राचीन काल में उत्तर प्रदेश को किस नाम से जाना जाता था?, मध्य देश, व्याख्या: वैदिक काल और पौराणिक काल में इस भू-भाग को 'मध्य देश' या 'आर्यावर्त' कहा जाता था।
+संयुक्त प्रांत (United Provinces) का नाम बदलकर उत्तर प्रदेश कब किया गया?, 24 जनवरी 1950, व्याख्या: भारत का संविधान लागू होने से ठीक दो दिन पहले 24 जनवरी 1950 को इसका नाम उत्तर प्रदेश रखा गया। 
+</textarea> 
+
+<script>
+    const SECONDS_BEFORE_ANSWER = 1; 
+    const SECONDS_BEFORE_NEXT_QUESTION = 1; 
+
+    let contentList = [];
+    let currentSpeechIndex = 0;
+    let currentTopicIndex = 0;
+    let topicElements = [];
+    let questionIndices = [];
+    let isSpeakingActive = false;
+    let allAnswersVisible = false; 
+    let globalExplanationMode = false; 
+    let clickCounts = {}; 
+    let wakeLockObj = null; 
+    let currentTimer = null; 
+    let activeSpeechToken = 0;
+    let navMode = 'topic'; 
+
+    // === 1. कैनवस एनिमेटेड नो-स्लीप सिस्टम (लाइट बंद नहीं होने देगा) ===
+    function startCanvasWakeLoop() {
+        const canvas = document.getElementById('dummy-canvas');
+        const video = document.getElementById('keep-screen-on-video');
+        if (!canvas || !video) return;
+
+        const ctx = canvas.getContext('2d');
+        let colorToggle = false;
+
+        // कैनवस पर लगातार 1-1 सेकंड में रंग बदलना (ब्राउज़र को एक्टिव रखने के लिए)
+        setInterval(() => {
+            ctx.fillStyle = colorToggle ? '#ffffff' : '#000000';
+            ctx.fillRect(0, 0, 10, 10);
+            colorToggle = !colorToggle;
+        }, 1000);
+
+        // कैनवस की लाइव स्ट्रीम बनाकर वीडियो टैग में फ़ीड करना
+        if (canvas.captureStream && !video.srcObject) {
+            try {
+                const stream = canvas.captureStream(10); // 10 FPS
+                video.srcObject = stream;
+                video.play().catch(e => {});
+            } catch (e) {}
+        }
+    }
+
+    async function keepScreenAlive() {
+        startCanvasWakeLoop();
+
+        let video = document.getElementById('keep-screen-on-video');
+        if (video && video.paused) {
+            video.play().catch(e => {});
+        } 
+
+        // वेब वेकलॉक API (आधुनिक मोबाइल्स के लिए)
+        if ('wakeLock' in navigator && wakeLockObj === null) {
+            try { 
+                wakeLockObj = await navigator.wakeLock.request('screen'); 
+            } catch (err) {}
+        }
+    } 
+
+    window.addEventListener('DOMContentLoaded', () => {
+        keepScreenAlive();
+
+        let rawText = document.getElementById('hidden-qa-source').value;
+        let lines = rawText.trim().split('\n');
+        let qCounter = 1;
+
+        lines.forEach((line) => {
+            line = line.trim();
+            if (!line) return; 
+
+            if (line.startsWith("T ")) {
+                contentList.push({
+                    type: 'topic',
+                    text: line.substring(1).trim()
+                });
+            } else {
+                let isVip = false;
+                let cleanLine = line;
+                if (line.startsWith("V ")) {
+                    isVip = true;
+                    cleanLine = line.substring(1).trim();
+                } 
+
+                let parts = cleanLine.split(',');
+                let questionText = parts[0] ? parts[0].trim() : "";
+                let answerText = parts[1] ? parts[1].trim() : "";
+                let explanationText = parts.length > 2 ? parts.slice(2).join(',').trim() : ""; 
+
+                if (questionText) {
+                    contentList.push({
+                        type: 'question',
+                        qNum: "Q" + qCounter++,
+                        question: questionText,
+                        answer: answerText,
+                        explanation: explanationText,
+                        isVip: isVip
+                    });
+                }
+            }
+        }); 
+
+        renderQAList();
+        initSecurityGuards(); 
+    }); 
+
+    // यूजर द्वारा स्क्रीन पर कहीं भी टच करते ही कैनवस और ऑडियो इंजन एक्टिवेट हो जाएगा
+    document.addEventListener('touchstart', () => { keepScreenAlive(); }, { passive: true });
+    document.addEventListener('click', () => { keepScreenAlive(); });
+
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+            wakeLockObj = null;
+            keepScreenAlive();
+        }
+    });
+
+    // === 2. स्पीच इंजन ===
+    function stopAllAudio() {
+        activeSpeechToken++;
+        if (currentTimer) { clearTimeout(currentTimer); currentTimer = null; }
+        if ('speechSynthesis' in window) {
+            window.speechSynthesis.pause();
+            window.speechSynthesis.cancel();
+        }
+    }
+
+    function speakText(text, onEndCallback, myToken) {
+        if (!isSpeakingActive || myToken !== activeSpeechToken) return; 
+
+        if ('speechSynthesis' in window) {
+            window.speechSynthesis.cancel(); 
+            let utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'hi-IN';
+            utterance.rate = 0.95; 
+
+            let hasEnded = false;
+            utterance.onend = function() {
+                if (!hasEnded && isSpeakingActive && myToken === activeSpeechToken) {
+                    hasEnded = true; if (onEndCallback) onEndCallback();
+                }
+            }; 
+            utterance.onerror = function() {
+                if (!hasEnded && isSpeakingActive && myToken === activeSpeechToken) {
+                    hasEnded = true; if (onEndCallback) onEndCallback();
+                }
+            }; 
+            window.speechSynthesis.speak(utterance);
+        } else {
+            if (onEndCallback && isSpeakingActive && myToken === activeSpeechToken) onEndCallback();
+        }
+    } 
+
+    function initSecurityGuards() {
+        document.addEventListener('keydown', function(e) {
+            if (e.keyCode === 123 || (e.ctrlKey && e.shiftKey && (e.keyCode === 73 || e.keyCode === 74 || e.keyCode === 67)) || (e.ctrlKey && (e.keyCode === 85 || e.keyCode === 67 || e.keyCode === 88 || e.keyCode === 65 || e.keyCode === 83 || e.keyCode === 80))) {
+                e.preventDefault(); return false;
+            }
+        }); 
+        window.addEventListener('blur', () => { let box = document.getElementById('qa-scroll-box'); if (box) box.style.filter = 'blur(15px)'; }); 
+        window.addEventListener('focus', () => { let box = document.getElementById('qa-scroll-box'); if (box) box.style.filter = 'none'; }); 
+        window.addEventListener('beforeunload', () => { stopAllAudio(); });
+    } 
+
+    // === 3. रेंडर लिस्ट ===
+    function renderQAList() {
+        let container = document.getElementById('qa-list-container');
+        let html = "";
+        topicElements = [];
+        questionIndices = [];
+
+        contentList.forEach((item, index) => {
+            if (item.type === 'topic') {
+                html += `<div id="qa-item-${index}" style="color: #d35400; font-size: 20px; font-weight: bold; padding: 15px 5px 10px 5px; border-bottom: 2px solid #d35400; margin-top: 10px; text-transform: uppercase;">
+                    📌 ${item.text}
+                </div>`;
+                topicElements.push(index);
+            } else {
+                questionIndices.push(index);
+                let baseColor = item.isVip ? "#d35400" : "#333";
+                let clickAction = `onclick="handleItemClick(${index})"`;
+                let ansSpanHtml = item.answer ? `<span id="ans-span-${index}" style="color: #d35400; font-weight: bold; margin-left: auto; display: none; white-space: nowrap;">${item.answer}</span>` : "";
+                
+                let explBoxHtml = "";
+                if (item.explanation) {
+                    explBoxHtml = `<div id="expl-box-${index}" style="display: none; background: #eef6ff; border-left: 4px solid #2980b9; padding: 10px; margin-top: 8px; font-size: 15px; color: #333; border-radius: 4px;">
+                        <b>व्याख्या:</b> <span id="expl-text-${index}">${item.explanation}</span>
+                    </div>`;
+                }
+                
+                html += `<div id="qa-container-${index}" style="border-bottom: 1px solid #f0f0f0; padding: 14px 6px;">
+                    <div id="qa-item-${index}" ${clickAction} style="cursor: pointer; font-size: 18px; line-height: 1.6; display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px;" onmouseover="this.style.background='#f9f9f9'" onmouseout="this.style.background='transparent'">
+                        <span id="question-text-${index}" style="color: ${baseColor}; font-weight: bold; border-bottom: 2px solid transparent; transition: border-color 0.2s;">
+                            <strong style="color: #007bff;" id="qnum-${index}">${item.qNum}.</strong> 
+                            <span id="qtext-${index}">${item.question}</span>
+                        </span>
+                        ${ansSpanHtml}
+                    </div>
+                    ${explBoxHtml}
+                </div>`;
+            }
+        });
+        container.innerHTML = html;
+    } 
+
+    // === 4. मोड टॉगल ===
+    function toggleNavMode() {
+        let btn = document.getElementById('nav-mode-btn');
+        if (navMode === 'topic') {
+            navMode = 'question';
+            btn.innerText = "💡 मोड: प्रश्न बदलें";
+            btn.className = "btn btn-blue";
+        } else {
+            navMode = 'topic';
+            btn.innerText = "📌 मोड: विषय बदलें";
+            btn.className = "btn btn-dark";
+        }
+    }
+
+    // === 5. नेविगेशन ===
+    function handleNavigation(direction) {
+        if (navMode === 'topic') {
+            changeTopic(direction);
+        } else {
+            changeQuestion(direction);
+        }
+    }
+
+    function changeTopic(direction) {
+        if (topicElements.length === 0) return; 
+        let wasSpeaking = isSpeakingActive;
+        isSpeakingActive = false;
+        stopAllAudio();
+
+        currentTopicIndex += direction;
+        if (currentTopicIndex < 0) currentTopicIndex = topicElements.length - 1;
+        else if (currentTopicIndex >= topicElements.length) currentTopicIndex = 0;
+
+        let targetIndex = topicElements[currentTopicIndex];
+        currentSpeechIndex = targetIndex; 
+
+        let targetElement = document.getElementById(`qa-item-${targetIndex}`);
+        if (targetElement) targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+        if (wasSpeaking) {
+            setTimeout(() => { isSpeakingActive = true; playNextInSequence(); }, 200);
+        }
+    }
+
+    function changeQuestion(direction) {
+        if (questionIndices.length === 0) return;
+        let wasSpeaking = isSpeakingActive;
+        isSpeakingActive = false;
+        stopAllAudio();
+
+        let currentQPos = questionIndices.indexOf(currentSpeechIndex);
+        if (currentQPos === -1) {
+            currentQPos = questionIndices.findIndex(idx => idx > currentSpeechIndex);
+            if (currentQPos === -1) currentQPos = 0;
+        } else {
+            currentQPos += direction;
+        }
+
+        if (currentQPos < 0) currentQPos = questionIndices.length - 1;
+        else if (currentQPos >= questionIndices.length) currentQPos = 0;
+
+        let targetIndex = questionIndices[currentQPos];
+        currentSpeechIndex = targetIndex;
+
+        if (!allAnswersVisible) {
+            contentList.forEach((item, i) => {
+                if (item.type === 'question') {
+                    let span = document.getElementById(`ans-span-${i}`);
+                    let expl = document.getElementById(`expl-box-${i}`);
+                    if (span) span.style.display = "none";
+                    if (expl) expl.style.display = "none";
+                }
+            });
+        }
+
+        let targetSpan = document.getElementById(`ans-span-${targetIndex}`);
+        if (targetSpan) targetSpan.style.display = "inline";
+
+        let targetExpl = document.getElementById(`expl-box-${targetIndex}`);
+        if (targetExpl && globalExplanationMode && contentList[targetIndex].explanation) {
+            targetExpl.style.display = "block";
+        }
+
+        highlightQuestion(targetIndex);
+
+        let targetElement = document.getElementById(`qa-item-${targetIndex}`);
+        if (targetElement) targetElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+        if (wasSpeaking) {
+            setTimeout(() => { isSpeakingActive = true; playNextInSequence(); }, 200);
+        }
+    }
+
+    function toggleGlobalExplanationMode() {
+        globalExplanationMode = !globalExplanationMode;
+        let btn = document.getElementById('toggle-expl-mode-btn');
+        if (globalExplanationMode) {
+            btn.innerText = "📖 व्याख्या न देखें";
+            btn.style.background = "#2ecc71"; 
+            if (allAnswersVisible) {
+                contentList.forEach((item, index) => {
+                    if (item.type === 'question' && item.explanation) {
+                        let explBox = document.getElementById(`expl-box-${index}`);
+                        if (explBox) explBox.style.display = "block";
+                    }
+                });
+            }
+        } else {
+            btn.innerText = "📖 व्याख्या देखें";
+            btn.style.background = "#7f8c8d"; 
+            contentList.forEach((item, index) => {
+                if (item.type === 'question') {
+                    let explBox = document.getElementById(`expl-box-${index}`);
+                    if (explBox) explBox.style.display = "none";
+                }
+            });
+        }
+    } 
+
+    function handleItemClick(index) {
+        if (contentList[index].type !== 'question') return; 
+
+        if (!allAnswersVisible) {
+            contentList.forEach((item, i) => {
+                if (item.type === 'question' && i !== index) {
+                    let prevSpan = document.getElementById(`ans-span-${i}`);
+                    let prevExpl = document.getElementById(`expl-box-${i}`);
+                    if (prevSpan) prevSpan.style.display = "none";
+                    if (prevExpl) prevExpl.style.display = "none";
+                    clickCounts[i] = 0;
+                }
+            });
+        } 
+
+        let item = contentList[index];
+        let span = document.getElementById(`ans-span-${index}`);
+        let explBox = document.getElementById(`expl-box-${index}`); 
+
+        if (!clickCounts[index]) clickCounts[index] = 0;
+        clickCounts[index]++; 
+
+        if (globalExplanationMode) {
+            if (clickCounts[index] === 1) {
+                if (span) span.style.display = "inline";
+                if (explBox && item.explanation) explBox.style.display = "block";
+            } else {
+                if (span) span.style.display = "none";
+                if (explBox) explBox.style.display = "none";
+                clickCounts[index] = 0;
+            }
+        } else {
+            if (clickCounts[index] === 1) {
+                if (span) span.style.display = "inline";
+                if (explBox) explBox.style.display = "none";
+            } else if (clickCounts[index] === 2) {
+                if (span) span.style.display = "inline";
+                if (explBox && item.explanation) explBox.style.display = "block"; 
+            } else {
+                if (span) span.style.display = "none";
+                if (explBox) explBox.style.display = "none"; 
+                clickCounts[index] = 0;
+            }
+        } 
+
+        highlightQuestion(index);
+    } 
+
+    function highlightQuestion(index) {
+        contentList.forEach((item, i) => {
+            let qSpan = document.getElementById(`question-text-${i}`);
+            if (qSpan) qSpan.style.borderColor = "transparent";
+        });
+
+        let targetQSpan = document.getElementById(`question-text-${index}`);
+        if (targetQSpan) targetQSpan.style.borderColor = "#85c1e9";
+    } 
+
+    function toggleAllAnswers() {
+        let btn = document.getElementById('toggle-all-btn');
+        if (!allAnswersVisible) {
+            contentList.forEach((item, index) => {
+                if (item.type === 'question') {
+                    let span = document.getElementById(`ans-span-${index}`);
+                    if(span) span.style.display = "inline";
+                    let explBox = document.getElementById(`expl-box-${index}`);
+                    if(explBox && globalExplanationMode) explBox.style.display = "block";
+                    else if(explBox) explBox.style.display = "none";
+                    clickCounts[index] = globalExplanationMode ? 1 : 2; 
+                }
+            });
+            allAnswersVisible = true;
+            btn.innerText = "उत्तर न देखें";
+            btn.style.background = "#c0392b"; 
+        } else {
+            contentList.forEach((item, index) => {
+                if (item.type === 'question') {
+                    let span = document.getElementById(`ans-span-${index}`);
+                    if(span) span.style.display = "none";
+                    let explBox = document.getElementById(`expl-box-${index}`);
+                    if(explBox) explBox.style.display = "none";
+                    clickCounts[index] = 0;
+                }
+            });
+            allAnswersVisible = false;
+            btn.innerText = "सब उत्तर देखें";
+            btn.style.background = "#e67e22"; 
+        }
+    } 
+
+    function toggleBlogSpeech() {
+        let btn = document.getElementById('blog-speaker-btn');
+        if (isSpeakingActive) {
+            isSpeakingActive = false;
+            stopAllAudio();
+            btn.style.background = "#7f8c8d"; 
+            btn.innerText = "🔊 स्पीकर चालू करें";
+        } else {
+            if (currentSpeechIndex >= contentList.length) {
+                currentSpeechIndex = 0;
+                currentTopicIndex = 0;
+            }
+            stopAllAudio();
+            setTimeout(() => {
+                isSpeakingActive = true;
+                btn.style.background = "#2ecc71"; 
+                btn.innerText = "🔊 स्पीकर चालू है (रोकें)";
+                playNextInSequence();
+            }, 100);
+        }
+    } 
+
+    // === 6. प्ले सीक्वेंस ===
+    function playNextInSequence() {
+        if (!isSpeakingActive || currentSpeechIndex >= contentList.length) {
+            if (currentSpeechIndex >= contentList.length) {
+                isSpeakingActive = false;
+                let btn = document.getElementById('blog-speaker-btn');
+                if (btn) {
+                    btn.style.background = "#7f8c8d";
+                    btn.innerText = "🔊 स्पीकर चालू करें";
+                }
+            }
+            return;
+        } 
+
+        let myToken = activeSpeechToken;
+        let item = contentList[currentSpeechIndex];
+        let itemElement = document.getElementById(`qa-item-${currentSpeechIndex}`);
+        
+        if(itemElement) itemElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+        if (item.type === 'topic') {
+            if (!allAnswersVisible) {
+                contentList.forEach((prevItem, prevIdx) => {
+                    if (prevItem.type === 'question') {
+                        let prevSpan = document.getElementById(`ans-span-${prevIdx}`);
+                        let prevExpl = document.getElementById(`expl-box-${prevIdx}`);
+                        if (prevSpan) prevSpan.style.display = "none";
+                        if (prevExpl) prevExpl.style.display = "none";
+                        clickCounts[prevIdx] = 0;
+                    }
+                });
+            } 
+
+            let foundTIndex = topicElements.indexOf(currentSpeechIndex);
+            if (foundTIndex !== -1) currentTopicIndex = foundTIndex;
+
+            speakText(item.text, function() {
+                if (!isSpeakingActive || myToken !== activeSpeechToken) return;
+                currentTimer = setTimeout(() => {
+                    if (!isSpeakingActive || myToken !== activeSpeechToken) return;
+                    currentSpeechIndex++;
+                    playNextInSequence();
+                }, 1000);
+            }, myToken);
+            return;
+        } 
+
+        highlightQuestion(currentSpeechIndex); 
+
+        speakText(item.question, function() {
+            if (!isSpeakingActive || myToken !== activeSpeechToken) return;
+            
+            if (!item.answer) {
+                currentTimer = setTimeout(() => {
+                    if (!isSpeakingActive || myToken !== activeSpeechToken) return;
+                    currentSpeechIndex++;
+                    playNextInSequence(); 
+                }, SECONDS_BEFORE_NEXT_QUESTION * 1000);
+                return;
+            } 
+
+            currentTimer = setTimeout(() => {
+                if (!isSpeakingActive || myToken !== activeSpeechToken) return;
+                
+                if (!allAnswersVisible) {
+                    contentList.forEach((prevItem, prevIdx) => {
+                        if (prevIdx !== currentSpeechIndex && prevItem.type === 'question') {
+                            let prevSpan = document.getElementById(`ans-span-${prevIdx}`);
+                            let prevExpl = document.getElementById(`expl-box-${prevIdx}`);
+                            if (prevSpan) prevSpan.style.display = "none";
+                            if (prevExpl) prevExpl.style.display = "none";
+                            clickCounts[prevIdx] = 0;
+                        }
+                    });
+                } 
+
+                let span = document.getElementById(`ans-span-${currentSpeechIndex}`);
+                if(span) span.style.display = "inline";
+                
+                let explBox = document.getElementById(`expl-box-${currentSpeechIndex}`);
+                if(explBox && globalExplanationMode) explBox.style.display = "block";
+                
+                speakText(item.answer, function() {
+                    if (!isSpeakingActive || myToken !== activeSpeechToken) return;
+                    
+                    if (globalExplanationMode && item.explanation) {
+                        currentTimer = setTimeout(() => {
+                            if (!isSpeakingActive || myToken !== activeSpeechToken) return;
+                            speakText("व्याख्या: " + item.explanation, function() {
+                                if (!isSpeakingActive || myToken !== activeSpeechToken) return;
+                                currentTimer = setTimeout(() => {
+                                    if (!isSpeakingActive || myToken !== activeSpeechToken) return;
+                                    currentSpeechIndex++;
+                                    playNextInSequence();
+                                }, SECONDS_BEFORE_NEXT_QUESTION * 1000);
+                            }, myToken); 
+                        }, 500);
+                    } else {
+                        currentTimer = setTimeout(() => {
+                            if (!isSpeakingActive || myToken !== activeSpeechToken) return;
+                            currentSpeechIndex++;
+                            playNextInSequence(); 
+                        }, SECONDS_BEFORE_NEXT_QUESTION * 1000);
+                    }
+                }, myToken); 
+
+            }, SECONDS_BEFORE_ANSWER * 1000);
+        }, myToken);
+    }
+</script> 
+
+</body>
+</html>
